@@ -19,7 +19,7 @@ Point it at a server, either a local command over stdio or a remote URL over Str
 
 **[Website and docs](https://simplymanas.github.io/mcp-master-tester/)** · **[Tutorial](https://medium.com/simplymanas/testing-any-mcp-server-step-by-step-with-mcp-master-tester-5b5cf4c0cc35)** · **[Video](https://www.youtube.com/watch?v=XXQ25jPZsh0)** · **[Survey: how much context 28 MCP servers use](https://simplymanas.github.io/mcp-master-tester/survey.html)**
 
-**New in 1.6:** a [GitHub Action](#github-action) that runs lint and the smoke test, with annotations and a summary on the job page. Earlier changes are in the [CHANGELOG](CHANGELOG.md).
+**New in 1.8:** [catch breaking changes](#breaking-changes) to your tools in CI with a lockfile. 1.7 added importing servers from a Claude Desktop, Cursor or VS Code config, and 1.6 the [GitHub Action](#github-action). Earlier changes are in the [CHANGELOG](CHANGELOG.md).
 
 Open source and looking for collaborators: see [Contributing](#contributing), first-timers welcome. If it's useful to you, a [star on GitHub](https://github.com/simplymanas/mcp-master-tester) helps other people find it.
 
@@ -72,7 +72,8 @@ Open source and looking for collaborators: see [Contributing](#contributing), fi
   - **From real calls:**
     - a badge and a warning when a result is over ~10k tokens
     - a badge and a warning when an `isError` result has no useful message for the model to recover from
-  - **The tab count** shows errors + warnings, coloured by the worst one, followed by the info findings in muted text. For example, `2 · 14` means 2 errors or warnings and 14 info suggestions.
+  - **The tab count** shows errors + warnings, coloured by the worst one, followed by the info findings in muted text. For example, `2 · 14`
+  - **Copy as Markdown** puts the report on the clipboard as a table, for an issue or a pull request means 2 errors or warnings and 14 info suggestions.
 - **Smoke test:** the **Smoke** tab calls every read-only tool once and shows which ones pass:
   - it fails a tool that doesn't answer in time, crashes the server, throws a protocol error, or returns a result that breaks its `outputSchema`
   - arguments come from your last run of the tool in this session, else from the schema's defaults, examples and enums, else they are made up (and an error for a made-up value is a warning, not a failure)
@@ -84,7 +85,8 @@ Open source and looking for collaborators: see [Contributing](#contributing), fi
   - the server's stderr
   - `notifications/message` log entries
   - a `logging/setLevel` control, available when the server declares the `logging` capability (otherwise it reads "no logging support")
-- **Profiles:** saved in your browser. Secrets are never stored, so the app asks for them when you connect.
+- **Breaking changes:** a [lockfile](#breaking-changes) of your tools, and `diff` in CI to flag what would break callers.
+- **Profiles:** saved in your browser. Secrets are never stored, so the app asks for them when you connect. **Import** turns the `mcpServers` JSON from Claude Desktop, Cursor or VS Code into profiles, leaving out secret values.
 - **No build step:** Express on the backend and plain JavaScript in the browser. Light and dark themes follow your system setting, or pick one with the button at the top right; the choice is remembered. The ⓘ button next to it shows the version and project links, and the layout works on phone-sized screens.
 
 ## Lightweight
@@ -100,7 +102,7 @@ Staying small is a goal of this project, and the test suite enforces it.
 
 Measured on 2026-11-12 with `npm install <package>` in an empty folder on macOS. The two tools differ in scope, so this compares install weight only.
 
-- **Two dependencies:** the official MCP SDK and Express. Nearly all of the 27 MB is the SDK's own dependency tree; this project's code is a 55 kB download.
+- **Two dependencies:** the official MCP SDK and Express. Nearly all of the 27 MB is the SDK's own dependency tree; this project's code is a 64 kB download.
 - **No build step, no frontend framework, no install scripts.**
 - **Nothing loads from the internet:** no CDN, fonts or analytics. The page's Content-Security-Policy blocks it.
 - **A weight budget in the tests** (`test/package.test.js`): a pull request that adds a dependency or pushes the package past its size limit fails CI.
@@ -179,18 +181,19 @@ A remote server, with only lint, failing on warnings:
 | `command` | Command that starts a stdio server, e.g. `node dist/index.js`. Split on spaces and run without a shell; use a script if an argument has a space in it. |
 | `url`, `sse`, `headers` | A remote server instead: its URL, `sse: true` for the legacy transport, and one `Name: value` header per line |
 | `env`, `cwd` | One `KEY=VALUE` per line for a stdio server, and its working directory. The server doesn't see the step's `env:`, apart from `PATH`, `HOME` and a few others, so put what it needs here. |
-| `checks` | `lint, smoke` (default), `lint` or `smoke` |
+| `checks` | Any of `lint`, `smoke`, `diff`. Left empty: `lint` and `smoke`, plus `diff` when the lockfile exists |
+| `lockfile`, `diff-fail-on` | For `diff`: the lockfile (default `mcp-tools.lock.json`), and `breaking` (default), `warn`, `info` or `never` |
 | `lint-fail-on` | `error` (default), `warn`, `info` or `never` |
 | `smoke-fail-on` | `fail` (default), `warn`, `skip` or `never` |
 | `tools` | Smoke-test only these tools, comma- or newline-separated, read-only or not. The safest way to choose what runs. |
 | `skip`, `all`, `args` | Leave tools out; also run tools that aren't clearly read-only; a JSON file of arguments. As in the [smoke test](#smoke-test-in-ci). |
 | `timeout` | Milliseconds for connecting, listing tools, or one tool call (default 30000) |
 
-The outputs `lint` and `smoke` are `passed`, `failed`, `error` (it couldn't run) or `skipped`. Both checks run even when the first one fails, and the step fails if either does.
+The outputs `lint`, `smoke` and `diff` are `passed`, `failed`, `error` (it couldn't run) or `skipped`. Every check runs even when an earlier one fails, and the step fails if any does.
 
 By default the smoke test only calls tools marked read-only, with made-up arguments. If the server in CI holds anything you care about, list the tools to run in `tools`.
 
-`@v1` follows the latest 1.x release. To stay on one version, use `@v1.6.0` or a commit SHA.
+`@v1` follows the latest 1.x release. To stay on one version, use `@v1.8.0` or a commit SHA.
 
 ## Lint in CI
 
@@ -265,29 +268,7 @@ mcp-master-tester smoke · my-server v1.4.0 · 6 tools · stdio
 
 The name check only catches careless labels. A `get_quote` that also fires a webhook looks read-only to any tool, which is why the allow-list comes first. If no tool runs at all, the command fails, because a run that called nothing has proved nothing.
 
-**What is sent.** A value for each required parameter and nothing else:
-
-1. the schema's `default`, first `examples` entry, `const` or first `enum` value, if it has one
-2. otherwise a made-up placeholder: `"test"`, `1`, or a value that fits the `format` (a URL, an email address, a date)
-
-**How an answer is judged:**
-
-| Result | When |
-|---|---|
-| `pass` | The tool answered with a normal result. |
-| `fail` | No answer before the timeout; the server closed the connection; a protocol error (the tool threw instead of returning an error result); a result that breaks the tool's `outputSchema`; or an error result for arguments that came from the schema or from you. |
-| `warn` | An error result, or "invalid params", for made-up arguments: the tool answered, but a placeholder can't prove it works. Also a result over ~10k tokens. |
-| `skip` | Not clearly read-only (not marked, or marked but named like a write), left out with `--skip`, or listed after a tool that crashed the server. |
-
-**A pass covers only the tools that ran.** When tools are skipped because they aren't marked read-only, the run says how many and which ones, and with `--format github` that is a warning on the workflow run. To make it a failure, use `--fail-on skip`: then every tool must either be tested (mark it read-only, or use `--all` or `--tool`) or be left out by name with `--skip`. This is the setting for a server whose annotations aren't complete yet.
-
-**List the skips you expect.** Together, `--skip` and `--fail-on skip` say "these tools should go untested, and no others":
-
-```bash
-npx mcp-master-tester smoke --fail-on skip --skip add_card --skip delete_card -- node dist/index.js
-```
-
-The tools you name show as "skipped on request" and don't count against the run. A new tool that nobody marked read-only fails it, and so does a renamed one, because a `--skip` name the server doesn't have is an error. `--fail-on skip` is the strictest level, so warnings fail the run too; clear them by giving real arguments, as below.
+How the arguments are chosen, how each answer is judged, and how to list the skips you expect (`--skip` with `--fail-on skip`) are in the [docs](https://simplymanas.github.io/mcp-master-tester/guide.html#smoke-args).
 
 **Give real arguments** to turn warnings into real checks. Print what would be sent, replace the made-up values, and pass the file back:
 
@@ -309,12 +290,33 @@ npx mcp-master-tester smoke --args smoke.json -- node dist/index.js
 
 `--format`, `--env`, `--cwd`, `--url`, `--sse` and `--header` work as they do for `lint`, and so do the exit codes. A misspelt tool name in `--tool`, `--skip` or the `--args` file is an error (exit 2), so a renamed tool can't quietly drop out of the test.
 
-**GitHub Actions**, next to lint (add `--tool` for each tool if the server in CI holds anything you care about):
+In GitHub Actions, the [action](#github-action) runs it for you.
 
-```yaml
-- run: npx -y mcp-master-tester lint --format github --fail-on warn -- node dist/index.js
-- run: npx -y mcp-master-tester smoke --format github --args smoke.json -- node dist/index.js
+## Breaking changes
+
+A lockfile records your server's tools. In CI, `diff` compares the live server with it, so a pull request that renames a parameter or drops a tool fails before your users' agents do.
+
+```bash
+npx mcp-master-tester snapshot -- node dist/index.js   # writes mcp-tools.lock.json; commit it
+npx mcp-master-tester diff -- node dist/index.js       # in CI: exit 1 on a breaking change
 ```
+
+```text
+  breaking  get_user     parameter "org": new required parameter, so existing calls without it fail
+  breaking  get_weather  output field "celsius": no longer always present
+  warn      search       description changed (412 → 980 characters): models read it on every request, so check the new text
+  info      export_csv   new tool
+```
+
+| Level | What counts |
+|---|---|
+| `breaking` | A tool or parameter removed; a new required parameter; a narrower type, enum or limit on an input; an output field removed, no longer always present, or of a new type; the outputSchema removed |
+| `warn` | A changed description (models act on it, and a changed description is how a tool can be repurposed), annotation or default, or a schema change it can't classify |
+| `info` | A new tool, optional parameter or output field; a wider type |
+
+`--fail-on breaking` is the default; `warn`, `info` and `never` are the others. `--lock <file>` reads another lockfile, and `snapshot --out <file>` writes one. When a change is intended, run `snapshot` again and commit the new lockfile in the same pull request. The [GitHub Action](#github-action) runs `diff` by itself once `mcp-tools.lock.json` is in the repo.
+
+The lockfile has no dates or server version, so it only changes when the tools do.
 
 ## Connecting to servers
 
@@ -335,40 +337,7 @@ Browser UI ──REST──▶ Express backend ──MCP──▶ your server (s
            ◀──SSE───  (one MCP Client per session; streams RPC frames, stderr, logs, elicitations)
 ```
 
-| File | Responsibility |
-|---|---|
-| `cli.js` | Command-line entry point: starts the web UI, or runs `lint` or `smoke` for CI |
-| `server.js` | Session lifecycle, transports, JSON-RPC tap, elicitation bridge, REST API |
-| `public/app.js` | Connection form, schema forms, result rendering, protocol log |
-| `public/theme.js` | Light/dark theme toggle (loaded in `<head>` so there's no flash of the wrong theme) |
-| `public/forms.js` | Argument forms built from a JSON Schema (pure functions that escape everything the server sends) |
-| `public/lint.js` | Lint rules (pure functions, shared by the UI, the CLI and the unit tests) |
-| `public/smoke.js` | Smoke test: which tools run, which arguments are sent, how answers are judged (pure functions, shared the same way) |
-| `public/style.css` | Theme tokens (light/dark) and layout |
-| `public/index.html` | Page shell |
-| `test/api.test.js` | Integration tests against the reference server (`npm test`) |
-| `test/lint.test.js` | Unit tests for every lint rule (`npm test`) |
-| `test/smoke.test.js` | Unit tests for the smoke test's planning and judging |
-| `test/forms.test.js` | Unit tests that hostile schema text never becomes markup in a form |
-| `test/package.test.js` | Weight budget: dependency list, package size and published files |
-| `test/cli.test.js` | Tests for `lint` and `smoke` from the command line, using fixture servers in `test/fixtures/` |
-
-### REST API
-
-All calls are `POST` with a JSON body. The reply is `{ ok, ms, result }`, or on failure `{ ok: false, error, code, data, authRequired }`.
-
-| Endpoint | MCP method |
-|---|---|
-| `/api/sessions` | connect (`initialize`) |
-| `DELETE /api/sessions/:id` | close |
-| `GET /api/sessions/:id/events` | event stream (SSE) |
-| `/api/sessions/:id/ping` | `ping` |
-| `/api/sessions/:id/tools/list` · `tools/call` | `tools/*` |
-| `/api/sessions/:id/resources/list` · `resources/templates` · `resources/read` | `resources/*` |
-| `/api/sessions/:id/prompts/list` · `prompts/get` | `prompts/*` |
-| `/api/sessions/:id/logging/level` | `logging/setLevel` |
-| `/api/sessions/:id/elicit/:reqId` | answer to `elicitation/create` |
-| `GET /api/info` | none: returns `{ name, version }` of this app, unwrapped |
+The project layout, the REST API and how to run the tests are in [CONTRIBUTING.md](CONTRIBUTING.md#set-up).
 
 ## Security
 

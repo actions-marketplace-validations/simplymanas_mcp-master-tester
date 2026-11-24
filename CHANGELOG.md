@@ -2,15 +2,37 @@
 
 All notable changes to MCP Master Tester. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.8.0] - 2026-11-23
 
 ### Added
 
+- **Catch breaking changes with a tool lockfile.** `mcp-master-tester snapshot` writes `mcp-tools.lock.json`, the server's tools in a stable, sorted form with no dates or server version, so it only changes when the tools do. Commit it. `mcp-master-tester diff` compares the live server with it and grades each change:
+  - **breaking:** a tool or parameter removed, a new required parameter, an optional parameter made required, a narrower type, enum or limit on an input, and for outputs a field removed, no longer always present or of a new type, or the outputSchema removed
+  - **warn:** a changed description (models act on it, and a changed description is how a tool can be repurposed), annotation or default, or a schema change it can't classify
+  - **info:** a new tool, optional parameter or output field, or a wider type
+  
+  It exits 1 on a breaking change, or at the level set with `--fail-on` (`breaking`, `warn`, `info`, `never`), and supports `--format text|json|github` and `--lock <file>`. Nested objects and array items are compared too, with a path such as `filter.tags[]`.
+- **The GitHub Action runs `diff`** as a third check. With `checks` left empty, it runs lint and smoke, plus diff once `mcp-tools.lock.json` is in the repo. New inputs `lockfile` and `diff-fail-on`, and a `diff` output. In the job summary, the Level column says `breaking` and the summary says how to update the lockfile. CI runs the action against a committed fixture lockfile, and against a changed server that must fail.
+
+### Changed
+
+- The website's home page shows four jobs, adding Diff, and its docs page has a Breaking changes section.
+- The README's detailed smoke-test reference (how arguments are chosen, how answers are judged, expected skips) now lives only on the website's docs page, with a link.
+- The package size budget is 70 kB (1.8.0 is 64 kB) and the installed-size budget 220 kB (1.8.0 is 203 kB). Still two runtime dependencies.
+
+## [1.7.0] - 2026-11-22
+
+### Added
+
+- **Import servers from a client's config.** The Profiles card has an **Import** button: paste the JSON from Claude Desktop (`claude_desktop_config.json`), Cursor, Windsurf, Cline (`mcpServers`) or VS Code (`servers`, in `.vscode/mcp.json` or settings), and each server becomes a profile. Stdio servers keep their command, arguments and environment; remote servers keep their URL, transport and headers. Secret values are never imported: an env var or header whose name looks secret, or whose value is a placeholder such as `${input:token}`, keeps its name and loses its value, and the app asks for it when you connect. The dialog says which servers were imported, which values you'll be asked for, and which entries were skipped and why. Profiles with the same name are replaced.
+- **Copy the lint report as Markdown.** A button in the Lint tab puts the report on the clipboard as a table with the server name and counts, ready for an issue or a pull request. Text from the server is cleaned so it can't break the table.
 - **A result that breaks its outputSchema is shown, not hidden.** The SDK checks a tool's `structuredContent` against its `outputSchema` and throws when it doesn't fit, so the app only showed the error. It now runs the same check itself and shows the whole result, with each problem listed above it (`celsius: must be number`) and the outputSchema one click away. The result is marked "breaks its outputSchema" in red, and its dot in the tool list and history is red. A tool that declares an outputSchema but returns no `structuredContent` now shows its text too. The smoke test still fails both cases, in the app and from the command line. Suggested in an outside review of the project; it was on the roadmap.
 
 ### Changed
 
 - The README opens with what the tool does, `npx mcp-master-tester` and the demo, with the links in one line. The 1.2.1 security notice moved out of the top: versions up to 1.2.0 are deprecated on npm with that notice, and the details stay in this changelog. The GitHub Action section shows a complete workflow file to copy, as does the website's docs page. The npm description uses the same opening line.
+- The project layout and REST API reference moved from the README to [CONTRIBUTING.md](CONTRIBUTING.md), where contributors look for them, and now list the action and the new files. The README keeps the diagram and a link, which also makes the package smaller.
+- The package size budget in `test/package.test.js` is raised from 60 kB to 64 kB. 1.7.0 is 60 kB, and Linux and macOS compress it a few bytes apart, so it no longer fits under 60 kB reliably. Still no new dependencies.
 
 ## [1.6.0] - 2026-11-21
 
@@ -185,6 +207,8 @@ These fixes are from [#6](https://github.com/simplymanas/mcp-master-tester/pull/
 
 First release: a local web UI to connect to, inspect and test any MCP server over stdio, Streamable HTTP or SSE, with schema-driven tool forms, auth and key prompts, elicitation, lint, and a live JSON-RPC log.
 
+[1.8.0]: https://github.com/simplymanas/mcp-master-tester/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/simplymanas/mcp-master-tester/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/simplymanas/mcp-master-tester/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/simplymanas/mcp-master-tester/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/simplymanas/mcp-master-tester/compare/v1.4.1...v1.4.2
