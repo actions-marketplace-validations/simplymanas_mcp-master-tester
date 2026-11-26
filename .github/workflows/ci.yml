@@ -15,7 +15,7 @@ jobs:
       matrix:
         node: [20, 22, 24, 26]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
@@ -27,7 +27,7 @@ jobs:
   action:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: ./
         id: healthy
         with:
