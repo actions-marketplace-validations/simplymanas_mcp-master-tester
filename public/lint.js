@@ -17,9 +17,13 @@ export const approxTokens = (chars) => Math.round(chars / 4).toLocaleString('en-
  * @param {object} [runtime]  what calls in this session revealed:
  *   bigResults: { [toolName]: chars }    largest oversized result per tool
  *   badErrors:  { [toolName]: string }   text of an isError result with no useful message
+ * @param {object} [budget]  token budgets the user set; going over one is an error:
+ *   maxTokens:     the whole tool list (replaces the fixed ~10k warning)
+ *   maxToolTokens: any one tool definition
+ *   tokenizer:     { name, count(text) } to count the budgets with a real tokenizer instead of characters / 4
  * @returns {{sev: 'error'|'warn'|'info', target: string, msg: string}[]}
  */
-export function lintTools(tools, runtime = {}) {
+export function lintTools(tools, runtime = {}, budget = {}) {
   const out = [];
   const add = (sev, target, msg) => out.push({ sev, target, msg });
   const seen = new Set();
@@ -80,11 +84,25 @@ export function lintTools(tools, runtime = {}) {
     else add('info', name, `name is ${STYLE_LABEL[style]}, not snake_case — snake_case is the most common MCP tool naming convention`);
   }
 
-  // The whole catalog is sent to the model on every request.
+  // The whole catalog is sent to the model on every request. A budget the user set replaces the fixed warning.
   const catalog = tools.reduce((n, t) => n + JSON.stringify(t).length, 0);
-  if (catalog > BIG_CATALOG_CHARS && tools.length) {
+  const sized = budget.maxTokens !== undefined || budget.maxToolTokens !== undefined ? toolListSize(tools, budget.tokenizer) : undefined;
+  const k = (n) => `${sized?.tokenizer ? '' : '~'}${n.toLocaleString('en-US')}`;
+  const unit = sized?.tokenizer ? `${sized.tokenizer} tokens` : 'tokens';
+  if (budget.maxTokens !== undefined && tools.length) {
+    if (sized.tokens > budget.maxTokens) {
+      const top = sized.tools.slice(0, 3).map((t) => `${t.name} ${k(t.tokens)}`).join(', ');
+      add('error', sized.tools[0].name, `all ${tools.length} tool definitions add up to ${k(sized.tokens)} ${unit}, over the budget of ${budget.maxTokens.toLocaleString('en-US')}; largest: ${top}`);
+    }
+  } else if (catalog > BIG_CATALOG_CHARS && tools.length) {
     const largest = tools.reduce((a, b) => (JSON.stringify(b).length > JSON.stringify(a).length ? b : a));
     add('warn', largest.name, `all ${tools.length} tool definitions add up to ~${approxTokens(catalog)} tokens, sent with every request; this is the largest (~${approxTokens(JSON.stringify(largest).length)})`);
+  }
+
+  if (budget.maxToolTokens !== undefined) {
+    for (const t of sized.tools) {
+      if (t.tokens > budget.maxToolTokens) add('error', t.name, `definition is ${k(t.tokens)} ${unit}, over the per-tool budget of ${budget.maxToolTokens.toLocaleString('en-US')}`);
+    }
   }
 
   // Tools a model could mix up.
@@ -118,13 +136,14 @@ export function lintTools(tools, runtime = {}) {
 
 // The lint report as Markdown, for pasting into an issue or a pull request. Server names, tool names
 // and messages come from the server, so table cells lose their pipes, newlines and backticks.
-export function lintMarkdown(findings, { serverInfo, tools } = {}) {
+export function lintMarkdown(findings, { serverInfo, tools, size } = {}) {
   const cell = (s) => String(s ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').replace(/`/g, "'");
   const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const n = (sev) => findings.filter((f) => f.sev === sev).length;
   const name = serverInfo?.name ? `${cell(serverInfo.name)}${serverInfo.version ? ` v${cell(serverInfo.version)}` : ''}` : 'MCP server';
   const out = [`### Lint report: ${name}`, ''];
   out.push(`${tools === undefined ? '' : `${count(tools, 'tool')} · `}${count(n('error'), 'error')}, ${count(n('warn'), 'warning')}, ${n('info')} info`, '');
+  if (size) out.push(...Object.values(sizeLines(size)).map((l) => `- ${cell(l)}`), '');
   if (findings.length) {
     out.push('| Level | Tool | Finding |', '|---|---|---|');
     for (const f of findings) out.push(`| ${f.sev} | \`${cell(f.target)}\` | ${cell(f.msg)} |`);
@@ -133,6 +152,57 @@ export function lintMarkdown(findings, { serverInfo, tools } = {}) {
   }
   out.push('', 'Checked with [MCP Master Tester](https://github.com/simplymanas/mcp-master-tester).');
   return out.join('\n');
+}
+
+// ---------------------------------------------------------------- size
+
+/**
+ * What a tool list is made of, in tokens. By default they are estimated (characters of compact JSON / 4,
+ * as everywhere in lint). With a tokenizer ({ name, count(text) }) they are counted, and the total is
+ * the count of all definitions together, the way the scorecard counts them.
+ * Parameter descriptions count as part of the input schema, since that's where they are sent.
+ * @returns {{ tokens: number, descriptions: number, inputSchemas: number, outputSchemas: number, other: number,
+ *   tools: { name: string, tokens: number }[], params: number, paramsNoDescription: number, tokenizer?: string }}
+ *   tools is largest first; tokenizer is the tokenizer's name when one counted.
+ */
+export function toolListSize(tools, tokenizer) {
+  const json = (v) => (v === undefined ? '' : JSON.stringify(v));
+  const tok = tokenizer ? (text) => (text ? tokenizer.count(text) : 0) : (text) => Math.round(text.length / 4);
+  const parts = { all: [], desc: [], input: [], output: [] };
+  let params = 0, paramsNoDescription = 0;
+  const each = [];
+  for (const t of tools) {
+    const whole = json(t);
+    parts.all.push(whole);
+    parts.desc.push(typeof t.description === 'string' ? json(t.description) : '');
+    parts.input.push(json(t.inputSchema));
+    parts.output.push(json(t.outputSchema));
+    each.push({ name: String(t.name), tokens: tok(whole) });
+    const props = t.inputSchema?.properties;
+    if (props && typeof props === 'object') {
+      for (const p of Object.values(props)) {
+        params++;
+        if (!(p && typeof p === 'object' && p.description)) paramsNoDescription++;
+      }
+    }
+  }
+  each.sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
+  const [tokens, descriptions, inputSchemas, outputSchemas] = [parts.all, parts.desc, parts.input, parts.output].map((l) => tok(l.join('')));
+  return { tokens, descriptions, inputSchemas, outputSchemas, other: Math.max(0, tokens - descriptions - inputSchemas - outputSchemas),
+    tools: each, params, paramsNoDescription, ...(tokenizer ? { tokenizer: tokenizer.name } : {}) };
+}
+
+// One line each for the size, the largest tools and the parameters, shared by the CLI and the web UI.
+// Estimates carry a "~"; counts from a tokenizer name it instead.
+export function sizeLines(size, { largest = 5 } = {}) {
+  const k = (n) => `${size.tokenizer ? '' : '~'}${n.toLocaleString('en-US')}`;
+  const parts = [`descriptions ${k(size.descriptions)}`, `input schemas ${k(size.inputSchemas)}`];
+  if (size.outputSchemas) parts.push(`output schemas ${k(size.outputSchemas)}`);
+  parts.push(`other ${k(size.other)}`);
+  const lines = { size: `Tool list: ${k(size.tokens)} ${size.tokenizer ? `${size.tokenizer} ` : ''}tokens (${parts.join(', ')})` };
+  if (size.tools.length > 1) lines.largest = `Largest: ${size.tools.slice(0, largest).map((t) => `${t.name} ${k(t.tokens)}`).join(', ')}`;
+  if (size.params) lines.params = `Parameters: ${size.paramsNoDescription.toLocaleString('en-US')} of ${size.params.toLocaleString('en-US')} have no description`;
+  return lines;
 }
 
 // ---------------------------------------------------------------- descriptions

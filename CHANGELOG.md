@@ -2,6 +2,29 @@
 
 All notable changes to MCP Master Tester. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.11.0] - 2026-11-26
+
+### Added
+
+- **Real token counts in lint.** `lint --tokenizer o200k` counts the size and the token budgets with OpenAI's o200k tokenizer instead of estimating characters / 4, so a CI budget agrees with the monthly scorecard, which counts the same way. Counts from a tokenizer drop the "~" and name it ("Tool list: 1,708 o200k tokens"). The default stays `estimate`. The GitHub Action has a matching `tokenizer` input. Suggested by Praneeth P K.
+
+### Changed
+
+- `gpt-tokenizer` is a second optional peer dependency, loaded only by `--tokenizer o200k`. npm doesn't install it, so the package keeps two runtime dependencies. Without it, lint says how to add it. The action installs it only when `tokenizer` is `o200k`.
+
+## [1.10.0] - 2026-11-25
+
+Four changes from readers' comments on the server survey.
+
+### Added
+
+- **Token budgets.** `lint --max-tokens <n>` makes a tool list over n tokens an error, so CI fails when the list grows past the budget and each new tool becomes a decision. It replaces the fixed warning at about 10,000 tokens. `--max-tool-tokens <n>` does the same for any one tool. The error names the largest tools. The GitHub Action has matching `max-tokens` and `max-tool-tokens` inputs.
+- **Where the size comes from.** Under the findings, lint now shows the tool list's size split into descriptions, input schemas, output schemas and the rest, the five largest tools, and how many parameters have no description. The same lines appear in the app's Lint tab, the Markdown report, `--format github` (and the Action's job summary), and as a `size` object in `--format json`.
+
+### Changed
+
+- A missing parameter description is still an info finding, but the count is now in the summary, so it shows without `--show-info`.
+
 ## [1.9.0] - 2026-11-25
 
 ### Added
@@ -219,6 +242,8 @@ These fixes are from [#6](https://github.com/simplymanas/mcp-master-tester/pull/
 
 First release: a local web UI to connect to, inspect and test any MCP server over stdio, Streamable HTTP or SSE, with schema-driven tool forms, auth and key prompts, elicitation, lint, and a live JSON-RPC log.
 
+[1.11.0]: https://github.com/simplymanas/mcp-master-tester/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/simplymanas/mcp-master-tester/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/simplymanas/mcp-master-tester/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/simplymanas/mcp-master-tester/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/simplymanas/mcp-master-tester/compare/v1.6.0...v1.7.0

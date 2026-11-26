@@ -24,11 +24,30 @@ test('action.yml passes every input to the script, and only through env', () => 
   for (const line of yml.split('\n').filter((l) => /^\s+run:/.test(l))) assert.ok(!line.includes('${{'), line);
 });
 
+// The Marketplace refuses to list a release whose action.yml breaks these rules (1.9.0 did).
+test('action.yml meets the Marketplace rules: a name, a short description, an icon and a color', () => {
+  const yml = readFileSync(path.join(root, 'action.yml'), 'utf8');
+  const field = (key) => new RegExp(`^${key}: *(.+)$`, 'm').exec(yml)?.[1].trim();
+  assert.ok(field('name'), 'name is required');
+  const description = field('description');
+  assert.ok(description, 'description is required');
+  assert.ok(description.length < 125, `description is ${description.length} characters; the Marketplace allows fewer than 125`);
+  assert.match(yml, /^branding:\n {2}icon: \S+\n {2}color: \S+$/m);
+});
+
 test('planRuns: a stdio server gets lint then smoke, with the command after --', () => {
   const runs = planRuns({ MMT_COMMAND: 'node dist/index.js --port  0', MMT_CHECKS: 'lint, smoke' });
   assert.deepEqual(runs.map((r) => r.check), ['lint', 'smoke']);
   assert.deepEqual(runs[0].argv, ['lint', '--format', 'github', '--timeout', '30000', '--fail-on', 'error', '--', 'node', 'dist/index.js', '--port', '0']);
   assert.deepEqual(runs[1].argv, ['smoke', '--format', 'github', '--timeout', '30000', '--fail-on', 'fail', '--', 'node', 'dist/index.js', '--port', '0']);
+  const budget = planRuns({ MMT_COMMAND: 'node s.js', MMT_CHECKS: 'lint', MMT_MAX_TOKENS: '8000', MMT_MAX_TOOL_TOKENS: '900' });
+  assert.deepEqual(budget[0].argv, ['lint', '--format', 'github', '--timeout', '30000', '--fail-on', 'error', '--max-tokens', '8000', '--max-tool-tokens', '900', '--', 'node', 's.js']);
+  assert.throws(() => planRuns({ MMT_COMMAND: 'node s.js', MMT_MAX_TOKENS: '10k' }), /max-tokens must be a whole number/);
+  assert.deepEqual(planRuns({ MMT_COMMAND: 'node s.js', MMT_CHECKS: 'lint', MMT_MAX_TOKENS: '8000', MMT_TOKENIZER: 'o200k' })[0].argv,
+    ['lint', '--format', 'github', '--timeout', '30000', '--fail-on', 'error', '--max-tokens', '8000', '--tokenizer', 'o200k', '--', 'node', 's.js']);
+  assert.deepEqual(planRuns({ MMT_COMMAND: 'node s.js', MMT_CHECKS: 'lint', MMT_TOKENIZER: 'estimate' })[0].argv,
+    ['lint', '--format', 'github', '--timeout', '30000', '--fail-on', 'error', '--', 'node', 's.js'], 'the default adds no flag');
+  assert.throws(() => planRuns({ MMT_COMMAND: 'node s.js', MMT_TOKENIZER: 'tiktoken' }), /tokenizer must be estimate, o200k/);
   const none = { exists: () => false };
   const lockOnDisk = { exists: (f) => f === 'mcp-tools.lock.json' };
   assert.deepEqual(planRuns({ MMT_COMMAND: 'node s.js' }, none).map((r) => r.check), ['lint', 'smoke'], 'lint and smoke by default');
